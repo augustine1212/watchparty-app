@@ -1,0 +1,14 @@
+{
+  "name": "watchparty-app",
+  "version": "1.0.0",
+  "description": "A simple online watch party app with chat and voice support (no database).",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "socket.io": "^4.7.2",
+    "uuid": "^9.0.0"
+  }
+}

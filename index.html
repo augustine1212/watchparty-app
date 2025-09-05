@@ -1,0 +1,567 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>WatchTogether — YouTube + Voice + Chat</title>
+
+<style>
+  :root{--bg:#f3f7fb;--card:#fff;--accent:#1e7be8;--muted:#666}
+  html,body{height:100%;margin:0;font-family:Inter,system-ui,Segoe UI,Roboto,"Helvetica Neue",Arial;}
+  body{background:linear-gradient(180deg,#f7fbff, #eef6ff);display:flex;justify-content:center;align-items:flex-start;padding:18px;}
+  .app{width:100%;max-width:1100px;background:var(--card);border-radius:12px;box-shadow:0 8px 30px rgba(20,30,60,0.08);overflow:hidden;display:grid;grid-template-columns:1fr 360px;gap:0;height:86vh;}
+  header{display:flex;align-items:center;justify-content:space-between;padding:12px 18px;border-bottom:1px solid #edf2f7;background:rgba(255,255,255,0.6)}
+  header .left{display:flex;gap:10px;align-items:center}
+  header h1{font-size:16px;margin:0}
+  .main{padding:12px}
+  .player-wrap{background:#000; border-radius:8px; padding:6px;height:100%;display:flex;flex-direction:column;gap:8px}
+  #player{width:100%;height:56vh;border-radius:6px;overflow:hidden;background:#000}
+  .controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .btn{background:var(--accent);color:#fff;padding:8px 10px;border-radius:8px;border:0;cursor:pointer}
+  .btn.secondary{background:#e6eefc;color:var(--accent);border:1px solid #d0e3ff;color:var(--accent)}
+  .small{padding:6px 8px;border-radius:8px}
+  .muted{color:var(--muted);font-size:13px}
+
+  /* right column */
+  .sidebar{border-left:1px solid #edf2f7;display:flex;flex-direction:column;height:100%}
+  .sidebar .top{padding:12px;border-bottom:1px solid #f0f6ff}
+  .invite{display:flex;gap:8px;align-items:center}
+  .linkbox{background:#f6fbff;padding:8px;border-radius:8px;border:1px dashed #e3f0ff;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .chat{flex:1;display:flex;flex-direction:column;min-height:0}
+  .messages{flex:1;padding:12px;overflow:auto}
+  .msg{margin-bottom:10px}
+  .participants{padding:12px;border-top:1px solid #f0f6ff}
+  .participant{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+  .avatar{width:36px;height:36px;border-radius:50%;background:#e9f2ff;display:flex;align-items:center;justify-content:center;font-weight:600;color:var(--accent)}
+
+  footer.controls-bar{display:flex;gap:8px;padding:12px;border-top:1px solid #f0f6ff;align-items:center}
+  .chat-input{display:flex;gap:8px;padding:8px}
+  input[type="text"], input[type="url"]{padding:8px;border-radius:8px;border:1px solid #e6eefc;flex:1}
+  @media(max-width:900px){
+    .app{grid-template-columns:1fr; height:100%}
+    #player{height:40vh}
+  }
+</style>
+</head>
+<body>
+  <div class="app" role="application">
+    <div style="display:flex;flex-direction:column;height:100%">
+      <header>
+        <div class="left">
+          <h1>WatchTogether</h1>
+          <div class="muted">Watch YouTube together • Voice + Chat</div>
+        </div>
+        <div>
+          <button id="createRoomBtn" class="btn small">Create Room</button>
+          <button id="copyLinkBtn" class="btn secondary small">Copy Invite</button>
+        </div>
+      </header>
+
+      <div class="main">
+        <div class="player-wrap">
+          <div style="display:flex;gap:10px;align-items:center;">
+            <input id="ytUrl" type="url" placeholder="Paste YouTube URL or ID and press Load" style="flex:1;padding:8px;border-radius:8px;border:1px solid #e6eefc" />
+            <button id="loadBtn" class="btn small">Load</button>
+            <button id="syncBtn" class="btn small secondary">Sync</button>
+          </div>
+
+          <div id="player"></div>
+
+          <div class="controls">
+            <button id="playBtn" class="btn small">Play</button>
+            <button id="pauseBtn" class="btn small">Pause</button>
+            <label class="muted" style="margin-left:auto">Mic:
+              <button id="micToggle" class="btn small secondary">Enable</button>
+            </label>
+          </div>
+
+          <div class="muted" style="font-size:13px">Note: First person to load the video becomes the host for initial state.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="sidebar">
+      <div class="top">
+        <div style="display:flex;gap:8px;align-items:center">
+          <div class="muted">Room:</div>
+          <div id="roomId" class="muted" style="font-weight:700"></div>
+        </div>
+
+        <div style="margin-top:8px" class="invite">
+          <div id="inviteLink" class="linkbox">No room yet</div>
+        </div>
+      </div>
+
+      <div class="chat" id="chat">
+        <div class="messages" id="messages"></div>
+
+        <div class="chat-input">
+          <input id="nameInput" type="text" placeholder="Your name" />
+          <input id="textInput" type="text" placeholder="Message" />
+          <button id="sendBtn" class="btn small">Send</button>
+        </div>
+      </div>
+
+      <div class="participants">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div class="muted">Participants</div>
+        </div>
+        <div id="participantsList" style="margin-top:8px"></div>
+      </div>
+
+      <footer class="controls-bar">
+        <div class="muted">Status: <span id="status">Disconnected</span></div>
+      </footer>
+    </div>
+  </div>
+
+<!-- Scripts -->
+<script src="/socket.io/socket.io.js"></script>
+<script>
+/*
+  Single-file front-end logic:
+  - Connects to Socket.io server
+  - Joins/creates room via URL ?room=<id>
+  - Implements WebRTC audio mesh using signaling via socket.io
+  - Embeds YouTube IFrame API and sync events (play/pause/seek)
+*/
+
+const socket = io();
+
+// Utilities
+function $id(i){return document.getElementById(i)}
+function makeId(n=8){ return Math.random().toString(36).slice(2,2+n) }
+
+// UI elements
+const createRoomBtn = $id('createRoomBtn')
+const copyLinkBtn = $id('copyLinkBtn')
+const roomIdEl = $id('roomId')
+const inviteLinkEl = $id('inviteLink')
+const loadBtn = $id('loadBtn')
+const ytUrl = $id('ytUrl')
+const playerContainer = $id('player')
+const playBtn = $id('playBtn')
+const pauseBtn = $id('pauseBtn')
+const syncBtn = $id('syncBtn')
+const micToggle = $id('micToggle')
+const messagesEl = $id('messages')
+const sendBtn = $id('sendBtn')
+const textInput = $id('textInput')
+const nameInput = $id('nameInput')
+const participantsList = $id('participantsList')
+const statusEl = $id('status')
+
+// Room handling
+let roomId = (new URLSearchParams(location.search)).get('room') || null;
+let displayName = localStorage.getItem('wt_name') || `User-${makeId(3)}`;
+nameInput.value = displayName;
+let isHost = false;
+
+function updateInviteUI(){
+  if(!roomId){ roomIdEl.textContent = '—'; inviteLinkEl.textContent = 'No room yet'; return; }
+  roomIdEl.textContent = roomId;
+  const link = `${location.origin}${location.pathname}?room=${roomId}`;
+  inviteLinkEl.textContent = link;
+}
+
+createRoomBtn.addEventListener('click', ()=>{
+  if(!roomId){
+    roomId = Math.random().toString(36).slice(2,10);
+    history.replaceState(null,'', `?room=${roomId}`);
+  }
+  joinRoom();
+  updateInviteUI();
+});
+
+copyLinkBtn.addEventListener('click', async ()=>{
+  if(!roomId){ alert('Create or join a room first'); return; }
+  try{
+    await navigator.clipboard.writeText(inviteLinkEl.textContent);
+    copyLinkBtn.textContent = 'Copied!'
+    setTimeout(()=> copyLinkBtn.textContent = 'Copy Invite', 1200)
+  }catch(e){ alert('Copy failed: ' + e) }
+});
+
+// auto-join if room param present
+if(roomId){
+  joinRoom();
+}
+updateInviteUI();
+
+function joinRoom(){
+  displayName = nameInput.value.trim() || displayName;
+  localStorage.setItem('wt_name', displayName);
+  socket.emit('join-room', { roomId, displayName });
+  statusEl.textContent = 'Connected';
+}
+
+// Chat
+sendBtn.addEventListener('click', ()=>{
+  const msg = textInput.value.trim(); if(!msg) return;
+  socket.emit('chat-message', { roomId, name: nameInput.value || displayName, message: msg });
+  textInput.value = '';
+});
+
+// Receive chat
+socket.on('chat-message', ({ id, name, message, ts })=>{
+  const el = document.createElement('div'); el.className='msg';
+  el.innerHTML = '<strong>'+escapeHtml(name)+':</strong> '+escapeHtml(message);
+  messagesEl.appendChild(el);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+});
+
+// participants + peer events
+const peers = {}; // peerId -> RTCPeerConnection
+const audioEls = {}; // peerId -> audio element
+
+socket.on('room-peers', ({ peers: peerIds })=>{
+  // existing peers in room: create offers to them
+  console.log('existing peers', peerIds);
+  if(peerIds.length === 0){
+    // you are the first = host
+    isHost = true;
+    console.log('You are host');
+  }
+  peerIds.forEach(remoteId => {
+    createPeerConnection(remoteId, true); // create offer
+  });
+  updateInviteUI();
+});
+
+socket.on('peer-joined', ({ id, displayName })=>{
+  addParticipant(id, displayName || 'User');
+  // if we are existing clients, wait for the new peer to create offers (role convention: existing clients create offers)
+  // But our server tells existing peers a 'peer-joined' — we will let existing peers create offer:
+  createPeerConnection(id, true)
+});
+
+socket.on('peer-left', ({ id })=>{
+  if(peers[id]){
+    peers[id].close();
+    delete peers[id];
+  }
+  if(audioEls[id]){
+    audioEls[id].remove();
+    delete audioEls[id];
+  }
+  removeParticipant(id);
+});
+
+// Signaling exchange
+socket.on('signal', async ({ from, data })=>{
+  if(!peers[from]) {
+    // create pc to handle incoming offer
+    createPeerConnection(from, false);
+  }
+  const pc = peers[from];
+  if(data.sdp){
+    await pc.setRemoteDescription(data.sdp);
+    if(data.sdp.type === 'offer'){
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      socket.emit('signal', { to: from, data: { sdp: pc.localDescription }});
+    }
+  } else if(data.ice){
+    try{ await pc.addIceCandidate(data.ice); }catch(e){ console.warn('ice add failed', e) }
+  }
+});
+
+// WebRTC: get local audio
+let localStream = null;
+async function ensureLocalAudio(){
+  if(localStream) return localStream;
+  try{
+    localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    return localStream;
+  }catch(e){
+    console.error('microphone denied', e);
+    alert('Microphone access is required for voice chat.');
+  }
+}
+
+let micEnabled = false;
+micToggle.addEventListener('click', async ()=>{
+  if(!micEnabled){
+    await ensureLocalAudio();
+    micEnabled = true;
+    micToggle.textContent = 'Disable';
+    micToggle.classList.remove('secondary');
+  } else {
+    if(localStream){
+      localStream.getTracks().forEach(t => t.enabled = false);
+    }
+    micEnabled = false;
+    micToggle.textContent = 'Enable';
+    micToggle.classList.add('secondary');
+  }
+});
+
+// Create RTCPeerConnection and offer/answer flow
+const configuration = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+
+function createPeerConnection(remoteId, makeOffer=false){
+  if(peers[remoteId]) return peers[remoteId];
+  const pc = new RTCPeerConnection(configuration);
+  peers[remoteId] = pc;
+
+  // add local audio when available
+  ensureLocalAudio().then(stream=>{
+    if(!stream) return;
+    stream.getAudioTracks().forEach(t => pc.addTrack(t, stream));
+    // if mic disabled by toggle, disable track
+    if(!micEnabled) stream.getTracks().forEach(t => t.enabled = micEnabled);
+  });
+
+  pc.onicecandidate = (e) => {
+    if(e.candidate) socket.emit('signal', { to: remoteId, data: { ice: e.candidate }});
+  };
+
+  pc.ontrack = (evt) => {
+    // attach remote audio
+    let el = audioEls[remoteId];
+    if(!el){
+      el = document.createElement('audio');
+      el.autoplay = true;
+      el.playsInline = true;
+      audioEls[remoteId] = el;
+      document.body.appendChild(el); // hidden audio elements
+    }
+    el.srcObject = evt.streams[0];
+  };
+
+  pc.onconnectionstatechange = ()=> {
+    console.log('pc state', remoteId, pc.connectionState);
+  };
+
+  // create offer if required
+  if(makeOffer){
+    pc.createOffer().then(offer=>{
+      return pc.setLocalDescription(offer);
+    }).then(()=>{
+      socket.emit('signal', { to: remoteId, data: { sdp: pc.localDescription }});
+    }).catch(e=>console.error(e));
+  }
+
+  return pc;
+}
+
+// Participants UI
+function addParticipant(id, displayName){
+  const el = document.createElement('div');
+  el.id = 'p-'+id;
+  el.className = 'participant';
+  el.innerHTML = `<div class="avatar">${escapeHtml((displayName||'U').slice(0,2).toUpperCase())}</div><div><strong>${escapeHtml(displayName||'User')}</strong><div style="font-size:12px;color:#888">${escapeHtml(id)}</div></div>`;
+  participantsList.appendChild(el);
+}
+function removeParticipant(id){ const e = $id('p-'+id); if(e) e.remove(); }
+
+// add self to participants on join
+socket.on('connect', ()=>{
+  if(roomId) joinRoom();
+});
+
+// When a new client connects, add existing participants as they announce
+socket.on('connect', ()=>{ statusEl.textContent = 'Connected' });
+
+// simple escape
+function escapeHtml(s){ return String(s).replace(/[&<>"']/g, c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c])); }
+
+// YouTube player integration
+let ytPlayer = null;
+let ytReady = false;
+let lastSyncedBy = null;
+let lastActionTs = 0;
+let playerVideoId = null;
+
+function loadYouTubeById(id){
+  playerVideoId = id;
+  if(!ytReady){
+    // wait until API ready
+    window.onYouTubeIframeAPIReady = ()=> {
+      ytPlayer = new YT.Player('player', {
+        height: '100%',
+        width: '100%',
+        videoId: id,
+        playerVars: { 'playsinline': 1, 'controls': 1 },
+        events: {
+          'onReady': onPlayerReady,
+          'onStateChange': onPlayerStateChange
+        }
+      });
+    }
+    const tag = document.createElement('script');
+    tag.src = "https://www.youtube.com/iframe_api";
+    document.head.appendChild(tag);
+    ytReady = true;
+  } else {
+    if(ytPlayer && typeof ytPlayer.loadVideoById === 'function'){
+      ytPlayer.loadVideoById(id);
+    } else {
+      // create new
+      ytPlayer = new YT.Player('player', {
+        height: '100%',
+        width: '100%',
+        videoId: id,
+        playerVars: { 'playsinline': 1, 'controls': 1 },
+        events: {
+          'onReady': onPlayerReady,
+          'onStateChange': onPlayerStateChange
+        }
+      });
+    }
+  }
+}
+
+function onPlayerReady(){ console.log('YT ready'); }
+function onPlayerStateChange(e){
+  const state = e.data; // 1 playing, 2 paused, 0 ended
+  const now = Date.now();
+  // avoid loops: if the last sync came from other user very recently, skip broadcasting
+  if(now - lastActionTs < 300) return;
+  lastActionTs = now;
+  if(state === 1){ // play
+    const t = ytPlayer.getCurrentTime();
+    socket.emit('yt-event', { roomId, event: 'play', payload: { time: t }});
+  } else if(state === 2){ // pause
+    const t = ytPlayer.getCurrentTime();
+    socket.emit('yt-event', { roomId, event: 'pause', payload: { time: t }});
+  } else if(state === 0){
+    // ended
+    socket.emit('yt-event', { roomId, event: 'ended', payload:{}});
+  }
+}
+
+socket.on('yt-event', ({ from, event, payload })=>{
+  // ignore own events
+  if(from === socket.id) return;
+  lastActionTs = Date.now();
+  if(!ytPlayer) return;
+  if(event === 'play'){
+    ytPlayer.seekTo(payload.time || 0, true);
+    ytPlayer.playVideo();
+  } else if(event === 'pause'){
+    ytPlayer.seekTo(payload.time || 0, true);
+    ytPlayer.pauseVideo();
+  } else if(event === 'seek'){
+    ytPlayer.seekTo(payload.time || 0, true);
+  } else if(event === 'ended'){
+    ytPlayer.stopVideo();
+  }
+});
+
+// Load button
+loadBtn.addEventListener('click', ()=>{
+  const raw = ytUrl.value.trim();
+  if(!raw) return;
+  const id = extractYouTubeID(raw);
+  if(!id){ alert('Invalid YouTube URL or ID'); return; }
+  loadYouTubeById(id);
+  // If we're the first in the room, set host true
+  if(!roomId){
+    createRoomBtn.click();
+  }
+  // notify others about new video load (host does)
+  socket.emit('yt-event', { roomId, event: 'load', payload: { videoId: id }});
+});
+
+// sync controls
+playBtn.addEventListener('click', ()=> {
+  if(ytPlayer){ ytPlayer.playVideo(); }
+});
+pauseBtn.addEventListener('click', ()=> {
+  if(ytPlayer){ ytPlayer.pauseVideo(); }
+});
+syncBtn.addEventListener('click', ()=> {
+  // request host state
+  socket.emit('request-host-state', { roomId });
+  appendSystemMsg('Requested sync from host...');
+});
+
+// host-state logic: when a host hears request-host-state and is host -> reply with current state
+socket.on('request-host-state', async ({ requester })=>{
+  // Only host replies with state
+  // Simple heuristic: host = first to join (isHost variable). For robustness, anyone who loaded video can reply too.
+  if(!ytPlayer) return;
+  const state = {
+    videoId: playerVideoId,
+    time: ytPlayer.getCurrentTime(),
+    playing: ytPlayer.getPlayerState() === 1
+  };
+  socket.emit('host-state', { roomId, state });
+});
+
+socket.on('host-state', ({ state })=>{
+  // apply host state
+  if(state.videoId) loadYouTubeById(state.videoId);
+  // small timeout to ensure player ready
+  setTimeout(()=> {
+    if(state.time != null) {
+      ytPlayer.seekTo(state.time, true);
+    }
+    if(state.playing) ytPlayer.playVideo(); else ytPlayer.pauseVideo();
+    appendSystemMsg('Synced to host state.');
+  }, 800);
+});
+
+// when others announce they loaded a video, update player
+socket.on('yt-event', ({ from, event, payload })=>{
+  if(from === socket.id) return;
+  if(event === 'load' && payload.videoId){
+    // load video but don't autoplay
+    loadYouTubeById(payload.videoId);
+    appendSystemMsg('Someone loaded a new video: ' + payload.videoId);
+  }
+});
+
+// utility: append system message
+function appendSystemMsg(txt){
+  const el = document.createElement('div'); el.className='msg muted'; el.innerText = txt;
+  messagesEl.appendChild(el); messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+// helper to parse YouTube id
+function extractYouTubeID(url){
+  if(!url) return null;
+  // direct id?
+  if(/^[a-zA-Z0-9_-]{11}$/.test(url)) return url;
+  try{
+    const u = new URL(url);
+    if(u.hostname.includes('youtu.be')){
+      return u.pathname.slice(1);
+    } else {
+      return u.searchParams.get('v');
+    }
+  }catch(e){
+    return null;
+  }
+}
+
+// Send simple join notification to show yourself
+socket.on('connect', ()=> {
+  appendSystemMsg('Connected to server.');
+  if(socket.connected && roomId){
+    // server will respond with peers etc
+  }
+});
+
+// show participants when peers join
+socket.on('peer-joined', ({ id, displayName })=>{
+  addParticipant(id, displayName);
+});
+socket.on('peer-left', ({ id })=>{
+  removeParticipant(id);
+});
+
+// When page unloads, close peers
+window.addEventListener('beforeunload', ()=>{
+  for(const k in peers) peers[k].close();
+});
+
+// small UI: clicking invite link copies
+inviteLinkEl.addEventListener('click', async ()=>{
+  if(!roomId) return;
+  try{ await navigator.clipboard.writeText(inviteLinkEl.textContent); copyLinkBtn.textContent = 'Copied!'; setTimeout(()=>copyLinkBtn.textContent='Copy Invite',1000)}catch(e){}
+});
+</script>
+</body>
+</html>
